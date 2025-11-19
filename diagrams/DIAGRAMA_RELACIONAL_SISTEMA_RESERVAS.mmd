@@ -1,0 +1,30 @@
+erDiagram
+    HOSPEDE {
+        string   cpf            "PK, NOT NULL"
+        string   nome           "NOT NULL"
+        string   telefone       "NOT NULL"
+        date     data_cadastro  "NOT NULL"
+    }
+
+    QUARTO {
+        int      numero_quarto  "PK, NOT NULL"
+        string   tipo           "Solteiro | Casal | Luxo, NOT NULL"
+        decimal  valor_diaria   "NOT NULL"
+        string   status         "Disponível | Ocupado | Em Limpeza, NOT NULL"
+    }
+
+    RESERVA {
+        int      id_reserva     "PK, NOT NULL"
+        string   cpf            "FK, NOT NULL"
+        int      numero_quarto  "FK, NOT NULL"
+        date     data_checkin   "NOT NULL"
+        date     data_checkout  "NOT NULL"
+        int      qtd_hospedes   "NOT NULL"
+        decimal  valor_total    "NOT NULL"
+        string   status         "Ativa | Cancelada | Finalizada, NOT NULL"
+        timestamp criado_em     "NOT NULL"
+    }
+
+    %% Cardinalidades
+    HOSPEDE ||--o{ RESERVA : "faz"
+    QUARTO  ||--o{ RESERVA : "aloca"
