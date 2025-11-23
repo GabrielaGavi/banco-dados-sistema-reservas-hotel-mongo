@@ -51,7 +51,7 @@ class Controller_Reserva:
 
         
         if not self.quarto_disponivel(numero_quarto, data_checkin, data_checkout):
-            print("\n❌ O quarto está indisponível para as datas informadas.\n")
+            print("\n O quarto está indisponível para as datas informadas.\n")
             self.mongo.close()
             return None
 
