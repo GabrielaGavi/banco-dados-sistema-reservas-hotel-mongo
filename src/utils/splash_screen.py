@@ -1,35 +1,38 @@
-from conexion.oracle_queries import OracleQueries
-from utils import config
+from conexion.mongo_queries import MongoQueries
+
 
 class SplashScreen:
 
     def __init__(self):
-        
-        self.qry_total_hospedes = config.QUERY_COUNT.format(tabela="hospede")
-        self.qry_total_quartos = config.QUERY_COUNT.format(tabela="quarto")
-        self.qry_total_reservas = config.QUERY_COUNT.format(tabela="reserva")
-        
 
-        
+        self.qry_total_hospedes = "mongo_count_hospede"
+        self.qry_total_quartos  = "mongo_count_quarto"
+        self.qry_total_reservas = "mongo_count_reserva"
+
         self.created_by = "Davi Pereira de Sousa, Gabriela Gave Gavi, José Luiz dos Santos Azeredo, Pedro Henrique Bispo, Pedro Henrique Ferreira Bonela"
         self.professor = "Prof. M.Sc. Howard Roatti"
         self.disciplina = "Banco de Dados"
         self.semestre = "2025/2"
 
+        self.mongo = MongoQueries(database="hotel_reservas")
+
     def get_total_hospedes(self):
-        oracle = OracleQueries()
-        oracle.connect()
-        return oracle.sqlToDataFrame(self.qry_total_hospedes)["total_hospede"].values[0]
+        self.mongo.connect()
+        total = self.mongo.db["hospede"].count_documents({})
+        self.mongo.close()
+        return total
 
     def get_total_quartos(self):
-        oracle = OracleQueries()
-        oracle.connect()
-        return oracle.sqlToDataFrame(self.qry_total_quartos)["total_quarto"].values[0]
+        self.mongo.connect()
+        total = self.mongo.db["quarto"].count_documents({})
+        self.mongo.close()
+        return total
 
     def get_total_reservas(self):
-        oracle = OracleQueries()
-        oracle.connect()
-        return oracle.sqlToDataFrame(self.qry_total_reservas)["total_reserva"].values[0]
+        self.mongo.connect()
+        total = self.mongo.db["reserva"].count_documents({})
+        self.mongo.close()
+        return total
 
     def get_updated_screen(self):
         return f"""
@@ -50,3 +53,5 @@ class SplashScreen:
         ########################################################
         """
 
+    def show(self):
+        print(self.get_updated_screen())
