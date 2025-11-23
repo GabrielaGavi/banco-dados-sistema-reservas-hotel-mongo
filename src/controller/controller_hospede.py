@@ -1,201 +1,223 @@
 from model.hospede import Hospede
-from conexion.oracle_queries import OracleQueries
+from conexion.mongo_queries import MongoQueries
 from datetime import datetime
 
 class Controller_Hospede:
     def __init__(self):
-        pass
-        
-    def inserir_hospede(self) -> Hospede:
-        
-        oracle = OracleQueries(can_write=True)
-        oracle.connect()
+        self.mongo = MongoQueries(database="hotel_reservas")
 
-        
+    def inserir_hospede(self) -> Hospede:
+        self.mongo.connect()
+
         cpf = input("CPF (Novo): ")
 
-        if self.verifica_existencia_hospede(oracle, cpf):
-            nome = input("Nome (Novo): ")
-            telefone = input("Telefone (Novo): ")
-            data_cadastro = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-            
-            oracle.write(f"""
-                INSERT INTO hospede (cpf, nome, telefone, data_cadastro)
-                VALUES ('{cpf}', '{nome}', '{telefone}', TO_DATE('{data_cadastro}', 'YYYY-MM-DD HH24:MI:SS'))
-            """)
-
-            
-            df_hospede = oracle.sqlToDataFrame(f"SELECT cpf, nome, telefone, data_cadastro FROM hospede WHERE cpf = '{cpf}'")
-            novo_hospede = Hospede(
-                df_hospede.cpf.values[0],
-                df_hospede.nome.values[0],
-                df_hospede.telefone.values[0],
-                str(df_hospede.data_cadastro.values[0])
-            )
-            print("\nHóspede inserido com sucesso!\n")
-            print(novo_hospede.to_string())
-            return novo_hospede
-        else:
+        
+        if self.verifica_existencia_hospede(cpf):
             print(f"\nO CPF {cpf} já está cadastrado.\n")
+            self.mongo.close()
             return None
 
+        nome = input("Nome (Novo): ")
+        telefone = input("Telefone (Novo): ")
+        data_cadastro = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+        documento = {
+            "cpf": cpf,
+            "nome": nome,
+            "telefone": telefone,
+            "data_cadastro": data_cadastro
+        }
+
+        self.mongo.db["hospede"].insert_one(documento)
+
+        novo = Hospede(cpf, nome, telefone, data_cadastro)
+
+        print("\nHóspede inserido com sucesso!\n")
+        print(novo.to_string())
+
+        self.mongo.close()
+        return novo
+
     def atualizar_hospede(self) -> Hospede:
-        oracle = OracleQueries(can_write=True)
-        oracle.connect()
+        self.mongo.connect()
 
         cpf = input("CPF do hóspede que deseja atualizar: ")
 
-        if not self.verifica_existencia_hospede(oracle, cpf):
-            nome = input("Novo nome: ")
-            telefone = input("Novo telefone: ")
-            data_cadastro = input("Nova data de cadastro (AAAA-MM-DD): ")
-
-            oracle.write(f"""
-                UPDATE hospede
-                SET nome = '{nome}', telefone = '{telefone}', data_cadastro = TO_DATE('{data_cadastro}', 'YYYY-MM-DD')
-                WHERE cpf = '{cpf}'
-            """)
-
-            df_hospede = oracle.sqlToDataFrame(f"SELECT cpf, nome, telefone, data_cadastro FROM hospede WHERE cpf = '{cpf}'")
-            hospede_atualizado = Hospede(
-                df_hospede.cpf.values[0],
-                df_hospede.nome.values[0],
-                df_hospede.telefone.values[0],
-                str(df_hospede.data_cadastro.values[0])
-            )
-            print("\nHóspede atualizado com sucesso!\n")
-            print(hospede_atualizado.to_string())
-            return hospede_atualizado
-        else:
+        if not self.verifica_existencia_hospede(cpf):
             print(f"\nO CPF {cpf} não existe.\n")
+            self.mongo.close()
             return None
 
-    
+        nome = input("Novo nome: ")
+        telefone = input("Novo telefone: ")
+        data_cadastro = input("Nova data de cadastro (AAAA-MM-DD): ")
+
+        self.mongo.db["hospede"].update_one(
+            {"cpf": cpf},
+            {"$set": {
+                "nome": nome,
+                "telefone": telefone,
+                "data_cadastro": data_cadastro
+            }}
+        )
+
+        doc = self.mongo.db["hospede"].find_one({"cpf": cpf}, {"_id": 0})
+
+        atualizado = Hospede(
+            doc["cpf"], doc["nome"], doc["telefone"], doc["data_cadastro"]
+        )
+
+        print("\nHóspede atualizado com sucesso!\n")
+        print(atualizado.to_string())
+
+        self.mongo.close()
+        return atualizado
+
     def atualizar_hospede_interactive(self) -> Hospede:
-        oracle = OracleQueries(can_write=True)
-        oracle.connect()
+        self.mongo.connect()
 
-        df = oracle.sqlToDataFrame("SELECT cpf, nome FROM hospede ORDER BY nome")
-        if df.empty:
+        hospedes = list(self.mongo.db["hospede"].find({}, {"_id": 0}).sort("nome", 1))
+
+        if len(hospedes) == 0:
             print("Nenhum hóspede cadastrado.")
+            self.mongo.close()
             return None
 
-        for i, row in enumerate(df.itertuples(), start=1):
-            print(f"{i}) CPF: {row.cpf} - Nome: {row.nome}")
+        for i, h in enumerate(hospedes, start=1):
+            print(f"{i}) CPF: {h['cpf']} - Nome: {h['nome']}")
 
         escolha = input("Selecione o número da tupla que deseja atualizar: ")
+
         try:
             idx = int(escolha) - 1
-            cpf = df.cpf.values[idx]
-        except Exception:
-            print("Seleção inválida")
+            cpf = hospedes[idx]["cpf"]
+        except:
+            print("Seleção inválida.")
+            self.mongo.close()
             return None
 
-        
-        escolha_attr = input("Atualizar todos os atributos? (S para sim / N para escolher um): ").strip().upper()
-        if escolha_attr == 'S':
+        escolha_attr = input("Atualizar todos os atributos? (S/N): ").strip().upper()
+
+        if escolha_attr == "S":
             nome = input("Novo nome: ")
             telefone = input("Novo telefone: ")
             data_cadastro = input("Nova data de cadastro (AAAA-MM-DD): ")
-            oracle.write(f"""
-                UPDATE hospede
-                SET nome = '{nome}', telefone = '{telefone}', data_cadastro = TO_DATE('{data_cadastro}', 'YYYY-MM-DD')
-                WHERE cpf = '{cpf}'
-            """)
+
+            self.mongo.db["hospede"].update_one(
+                {"cpf": cpf},
+                {"$set": {
+                    "nome": nome,
+                    "telefone": telefone,
+                    "data_cadastro": data_cadastro
+                }}
+            )
         else:
-            print("Escolha o atributo:\n1) nome\n2) telefone\n3) data_cadastro")
+            print("Escolha o atributo:")
+            print("1) Nome")
+            print("2) Telefone")
+            print("3) Data de Cadastro")
             opt = input("Opção: ")
-            if opt == '1':
-                nome = input("Novo nome: ")
-                oracle.write(f"UPDATE hospede SET nome = '{nome}' WHERE cpf = '{cpf}'")
-            elif opt == '2':
-                telefone = input("Novo telefone: ")
-                oracle.write(f"UPDATE hospede SET telefone = '{telefone}' WHERE cpf = '{cpf}'")
-            elif opt == '3':
-                data_cadastro = input("Nova data de cadastro (AAAA-MM-DD): ")
-                oracle.write(f"UPDATE hospede SET data_cadastro = TO_DATE('{data_cadastro}', 'YYYY-MM-DD') WHERE cpf = '{cpf}'")
+
+            if opt == "1":
+                valor = input("Novo nome: ")
+                self.mongo.db["hospede"].update_one({"cpf": cpf}, {"$set": {"nome": valor}})
+            elif opt == "2":
+                valor = input("Novo telefone: ")
+                self.mongo.db["hospede"].update_one({"cpf": cpf}, {"$set": {"telefone": valor}})
+            elif opt == "3":
+                valor = input("Nova data de cadastro (AAAA-MM-DD): ")
+                self.mongo.db["hospede"].update_one({"cpf": cpf}, {"$set": {"data_cadastro": valor}})
             else:
-                print("Opção inválida")
+                print("Opção inválida.")
+                self.mongo.close()
                 return None
 
-        df_hospede = oracle.sqlToDataFrame(f"SELECT cpf, nome, telefone, data_cadastro FROM hospede WHERE cpf = '{cpf}'")
-        hospede_atualizado = Hospede(
-            df_hospede.cpf.values[0],
-            df_hospede.nome.values[0],
-            df_hospede.telefone.values[0],
-            str(df_hospede.data_cadastro.values[0])
+        doc = self.mongo.db["hospede"].find_one({"cpf": cpf}, {"_id": 0})
+
+        atualizado = Hospede(
+            doc["cpf"], doc["nome"], doc["telefone"], doc["data_cadastro"]
         )
+
         print("\nHóspede atualizado com sucesso!\n")
-        print(hospede_atualizado.to_string())
-        return hospede_atualizado
+        print(atualizado.to_string())
 
-    
+        self.mongo.close()
+        return atualizado
+
     def excluir_hospede_interactive(self):
-        oracle = OracleQueries(can_write=True)
-        oracle.connect()
+        self.mongo.connect()
 
-        df = oracle.sqlToDataFrame("SELECT cpf, nome FROM hospede ORDER BY nome")
-        if df.empty:
+        hospedes = list(self.mongo.db["hospede"].find({}, {"_id": 0}).sort("nome", 1))
+
+        if len(hospedes) == 0:
             print("Nenhum hóspede cadastrado.")
+            self.mongo.close()
             return
 
-        for i, row in enumerate(df.itertuples(), start=1):
-            print(f"{i}) CPF: {row.cpf} - Nome: {row.nome}")
+        for i, h in enumerate(hospedes, start=1):
+            print(f"{i}) CPF: {h['cpf']} - Nome: {h['nome']}")
 
         escolha = input("Selecione o número da tupla que deseja excluir: ")
+
         try:
             idx = int(escolha) - 1
-            cpf = df.cpf.values[idx]
-        except Exception:
-            print("Seleção inválida")
+            cpf = hospedes[idx]["cpf"]
+        except:
+            print("Seleção inválida.")
+            self.mongo.close()
             return
 
         
-        df_fk = oracle.sqlToDataFrame(f"SELECT id_reserva FROM reserva WHERE cpf = '{cpf}'")
-        if not df_fk.empty:
-            print(f"O hóspede com CPF {cpf} possui reservas vinculadas e não pode ser excluído automaticamente.")
+        reservas = list(self.mongo.db["reserva"].find({"cpf": cpf}))
+
+        if len(reservas) > 0:
+            print(f"O hóspede CPF {cpf} possui reservas vinculadas.")
             resp = input("Deseja excluir também as reservas vinculadas? (S/N): ").strip().upper()
-            if resp != 'S':
-                print("Operação cancelada. Voltando ao menu.")
+            if resp != "S":
+                print("Operação cancelada.")
+                self.mongo.close()
                 return
             else:
-                
-                oracle.write(f"DELETE FROM reserva WHERE cpf = '{cpf}'")
+                self.mongo.db["reserva"].delete_many({"cpf": cpf})
 
-        df_hospede = oracle.sqlToDataFrame(f"SELECT cpf, nome, telefone, data_cadastro FROM hospede WHERE cpf = '{cpf}'")
-        oracle.write(f"DELETE FROM hospede WHERE cpf = '{cpf}'")
+        doc = self.mongo.db["hospede"].find_one({"cpf": cpf}, {"_id": 0})
+        self.mongo.db["hospede"].delete_one({"cpf": cpf})
 
-        hospede_excluido = Hospede(
-            df_hospede.cpf.values[0],
-            df_hospede.nome.values[0],
-            df_hospede.telefone.values[0],
-            str(df_hospede.data_cadastro.values[0])
+        excluido = Hospede(
+            doc["cpf"], doc["nome"], doc["telefone"], doc["data_cadastro"]
         )
-        print("\nHóspede removido com sucesso!\n")
-        print(hospede_excluido.to_string())
 
+        print("\nHóspede removido com sucesso!\n")
+        print(excluido.to_string())
+
+        self.mongo.close()
+
+    
     def excluir_hospede(self):
-        oracle = OracleQueries(can_write=True)
-        oracle.connect()
+        self.mongo.connect()
 
         cpf = input("CPF do hóspede que deseja excluir: ")
 
-        if not self.verifica_existencia_hospede(oracle, cpf):
-            df_hospede = oracle.sqlToDataFrame(f"SELECT cpf, nome, telefone, data_cadastro FROM hospede WHERE cpf = '{cpf}'")
-            oracle.write(f"DELETE FROM hospede WHERE cpf = '{cpf}'")
-
-            hospede_excluido = Hospede(
-                df_hospede.cpf.values[0],
-                df_hospede.nome.values[0],
-                df_hospede.telefone.values[0],
-                str(df_hospede.data_cadastro.values[0])
-            )
-            print("\nHóspede removido com sucesso!\n")
-            print(hospede_excluido.to_string())
-        else:
+        if not self.verifica_existencia_hospede(cpf):
             print(f"\nO CPF {cpf} não existe.\n")
+            self.mongo.close()
+            return
 
-    def verifica_existencia_hospede(self, oracle: OracleQueries, cpf: str = None) -> bool:
-        df_hospede = oracle.sqlToDataFrame(f"SELECT cpf FROM hospede WHERE cpf = '{cpf}'")
-        return df_hospede.empty
+        doc = self.mongo.db["hospede"].find_one({"cpf": cpf}, {"_id": 0})
+        self.mongo.db["hospede"].delete_one({"cpf": cpf})
+
+        excluido = Hospede(
+            doc["cpf"], doc["nome"], doc["telefone"], doc["data_cadastro"]
+        )
+
+        print("\nHóspede removido com sucesso!\n")
+        print(excluido.to_string())
+
+        self.mongo.close()
+
+
+    def verifica_existencia_hospede(self, cpf: str) -> bool:
+        self.mongo.connect()
+        existe = self.mongo.db["hospede"].find_one({"cpf": cpf}) is not None
+        self.mongo.close()
+        return existe
