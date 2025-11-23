@@ -1,231 +1,229 @@
-from datetime import datetime
 from model.reserva import Reserva
 from model.hospede import Hospede
 from model.quarto import Quarto
-from conexion.oracle_queries import OracleQueries
+from conexion.mongo_queries import MongoQueries
+from datetime import datetime
 
 class Controller_Reserva:
     def __init__(self):
-        pass
+        self.mongo = MongoQueries(database="hotel_reservas")
+
+    def quarto_disponivel(self, numero_quarto, checkin, checkout):
+        """Retorna True se não houver reservas em conflito."""
+        conflitos = self.mongo.db["reserva"].find({
+            "numero_quarto": numero_quarto,
+            "$or": [
+                {"data_checkin": {"$lte": checkout}, "data_checkout": {"$gte": checkin}}
+            ]
+        })
+        return len(list(conflitos)) == 0
 
     def inserir_reserva(self) -> Reserva:
-        oracle = OracleQueries(can_write=True)
-        oracle.connect()
+        self.mongo.connect()
 
         
-        df_hospedes = oracle.sqlToDataFrame("SELECT cpf, nome FROM hospede ORDER BY nome")
-        if df_hospedes.empty:
-            print("Nenhum hóspede cadastrado. Cadastre um hóspede antes de criar uma reserva.")
+        hospedes = list(self.mongo.db["hospede"].find({}, {"_id": 0}))
+        if len(hospedes) == 0:
+            print("\nNão há hóspedes cadastrados.\n")
+            self.mongo.close()
             return None
 
-        for i, row in enumerate(df_hospedes.itertuples(), start=1):
-            print(f"{i}) CPF: {row.cpf} - Nome: {row.nome}")
+        for i, h in enumerate(hospedes, start=1):
+            print(f"{i}) CPF: {h['cpf']} - Nome: {h['nome']}")
+        idx = int(input("Selecione o hóspede: ")) - 1
+        cpf = hospedes[idx]["cpf"]
 
-        escolha = input("Selecione o número do hóspede ou digite o CPF diretamente: ").strip()
-        cpf = None
-        try:
-            
-            if escolha.isdigit():
-                idx = int(escolha) - 1
-                cpf = df_hospedes.cpf.values[idx]
-            else:
-                cpf = escolha
-        except Exception:
-            print("Seleção inválida.")
+        
+        quartos = list(self.mongo.db["quarto"].find({}, {"_id": 0}))
+        if len(quartos) == 0:
+            print("\nNão há quartos cadastrados.\n")
+            self.mongo.close()
             return None
 
-        numero_quarto = int(input("Número do quarto: "))
-        data_checkin = input("Data de check-in (YYYY-MM-DD): ")
-        data_checkout = input("Data de check-out (YYYY-MM-DD): ")
+        for i, q in enumerate(quartos, start=1):
+            print(f"{i}) Número: {q['numero_quarto']} - Tipo: {q['tipo']} - Status: {q['status']}")
+        idx = int(input("Selecione o quarto: ")) - 1
+        numero_quarto = quartos[idx]["numero_quarto"]
+
+        
+        data_checkin = input("Data de check-in (AAAA-MM-DD): ")
+        data_checkout = input("Data de check-out (AAAA-MM-DD): ")
+
+        
+        if not self.quarto_disponivel(numero_quarto, data_checkin, data_checkout):
+            print("\n❌ O quarto está indisponível para as datas informadas.\n")
+            self.mongo.close()
+            return None
+
         qtd_hospedes = int(input("Quantidade de hóspedes: "))
-        status = input("Status (Ativa, Finalizada, Cancelada): ")
-
-       
-        df_hospede = oracle.sqlToDataFrame(f"SELECT * FROM hospede WHERE cpf = '{cpf}'")
-        if df_hospede.empty:
-            print(f"O hóspede com CPF {cpf} não existe.")
-            return None
-        hospede = Hospede(
-            df_hospede.cpf.values[0],
-            df_hospede.nome.values[0],
-            df_hospede.telefone.values[0],
-            str(df_hospede.data_cadastro.values[0])
-        )
-
-        df_quarto = oracle.sqlToDataFrame(f"SELECT * FROM quarto WHERE numero_quarto = {numero_quarto}")
-        if df_quarto.empty:
-            print(f"O quarto {numero_quarto} não existe.")
-            return None
-        quarto = Quarto(
-            df_quarto.numero_quarto.values[0],
-            df_quarto.tipo.values[0],
-            df_quarto.valor_diaria.values[0],
-            df_quarto.status.values[0]
-        )
 
         
-        checkin = datetime.strptime(data_checkin, "%Y-%m-%d")
-        checkout = datetime.strptime(data_checkout, "%Y-%m-%d")
-        dias = (checkout - checkin).days
-        if dias <= 0:
-            print("A data de check-out deve ser posterior à data de check-in.")
-            return None
+        quarto = self.mongo.db["quarto"].find_one({"numero_quarto": numero_quarto})
+        valor_diaria = float(quarto["valor_diaria"])
 
-        valor_total = dias * quarto.get_valor_diaria()
+        dias = (datetime.strptime(data_checkout, "%Y-%m-%d") -
+                datetime.strptime(data_checkin, "%Y-%m-%d")).days
 
-        oracle.write(f"""
-            INSERT INTO reserva (
-                id_reserva, cpf, numero_quarto, data_checkin, data_checkout,
-                qtd_hospedes, valor_total, status, criado_em
-            ) VALUES (
-                reserva_seq.NEXTVAL,
-                '{cpf}', {numero_quarto},
-                TO_DATE('{data_checkin}', 'YYYY-MM-DD'),
-                TO_DATE('{data_checkout}', 'YYYY-MM-DD'),
-                {qtd_hospedes}, {valor_total}, '{status}', SYSTIMESTAMP
-            )
-        """)
+        valor_total = dias * valor_diaria
 
-        df_reserva = oracle.sqlToDataFrame("""
-            SELECT * FROM (
-                SELECT * FROM reserva ORDER BY id_reserva DESC
-            ) WHERE ROWNUM = 1
-        """)
+        ultima = list(self.mongo.db["reserva"].find({}, {"_id": 0}).sort("id_reserva", -1).limit(1))
+        novo_id = 1 if len(ultima) == 0 else int(ultima[0]["id_reserva"]) + 1
 
-        nova_reserva = Reserva(
-            df_reserva.id_reserva.values[0],
-            hospede,
-            quarto,
-            str(df_reserva.data_checkin.values[0]),
-            str(df_reserva.data_checkout.values[0]),
-            df_reserva.qtd_hospedes.values[0],
-            df_reserva.valor_total.values[0],
-            df_reserva.status.values[0],
-            str(df_reserva.criado_em.values[0])
+        documento = {
+            "id_reserva": novo_id,
+            "cpf": cpf,
+            "numero_quarto": numero_quarto,
+            "data_checkin": data_checkin,
+            "data_checkout": data_checkout,
+            "qtd_hospedes": qtd_hospedes,
+            "valor_total": valor_total,
+            "status": "Ativa",
+            "criado_em": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        }
+
+        self.mongo.db["reserva"].insert_one(documento)
+
+        reserva = Reserva(
+            novo_id,
+            Hospede(cpf),
+            Quarto(numero_quarto),
+            data_checkin,
+            data_checkout,
+            qtd_hospedes,
+            valor_total,
+            "Ativa",
+            documento["criado_em"]
         )
 
-        print("\nReserva criada com sucesso!")
-        print(nova_reserva.to_string())
-        return nova_reserva
+        print("\nReserva inserida com sucesso!\n")
+        print(reserva.to_string())
 
-    def verifica_existencia_reserva(self, oracle: OracleQueries, id_reserva: int) -> bool:
-        df = oracle.sqlToDataFrame(f"SELECT id_reserva FROM reserva WHERE id_reserva = {id_reserva}")
-        return not df.empty
+        self.mongo.close()
+        return reserva
 
-    
-    def atualizar_reserva_interactive(self) -> Reserva:
-        oracle = OracleQueries(can_write=True)
-        oracle.connect()
+    def atualizar_reserva(self) -> Reserva:
+        self.mongo.connect()
 
-        df = oracle.sqlToDataFrame("SELECT id_reserva, cpf, numero_quarto, data_checkin, data_checkout, status FROM reserva ORDER BY id_reserva")
-        if df.empty:
-            print("Nenhuma reserva cadastrada.")
+        reserva_id = int(input("ID da reserva que deseja atualizar: "))
+
+        doc = self.mongo.db["reserva"].find_one({"id_reserva": reserva_id})
+
+        if not doc:
+            print("\nReserva não encontrada.\n")
+            self.mongo.close()
             return None
 
-        for i, row in enumerate(df.itertuples(), start=1):
-            print(f"{i}) ID: {row.id_reserva} - CPF: {row.cpf} - Quarto: {row.numero_quarto} - {row.status}")
+        print("\nDeixe em branco para não alterar.\n")
 
-        escolha = input("Selecione o número da tupla que deseja atualizar: ")
-        try:
-            idx = int(escolha) - 1
-            id_reserva = int(df.id_reserva.values[idx])
-        except Exception:
-            print("Seleção inválida")
-            return None
+        data_checkin = input(f"Novo check-in ({doc['data_checkin']}): ") or doc["data_checkin"]
+        data_checkout = input(f"Novo check-out ({doc['data_checkout']}): ") or doc["data_checkout"]
+        qtd_hospedes = input(f"Nova qtd hóspedes ({doc['qtd_hospedes']}): ") or doc["qtd_hospedes"]
+        status = input(f"Novo status ({doc['status']}): ") or doc["status"]
 
-        escolha_attr = input("Atualizar todos os atributos? (S para sim / N para escolher um): ").strip().upper()
-        if escolha_attr == 'S':
-            data_checkin = input("Data de check-in (YYYY-MM-DD): ")
-            data_checkout = input("Data de check-out (YYYY-MM-DD): ")
-            qtd_hospedes = int(input("Quantidade de hóspedes: "))
-            status = input("Status (Ativa, Finalizada, Cancelada): ")
-            oracle.write(f"""
-                UPDATE reserva
-                SET data_checkin = TO_DATE('{data_checkin}', 'YYYY-MM-DD'), data_checkout = TO_DATE('{data_checkout}', 'YYYY-MM-DD'), qtd_hospedes = {qtd_hospedes}, status = '{status}'
-                WHERE id_reserva = {id_reserva}
-            """)
-        else:
-            print("Escolha o atributo:\n1) data_checkin\n2) data_checkout\n3) qtd_hospedes\n4) status")
-            opt = input("Opção: ")
-            if opt == '1':
-                data_checkin = input("Data de check-in (YYYY-MM-DD): ")
-                oracle.write(f"UPDATE reserva SET data_checkin = TO_DATE('{data_checkin}', 'YYYY-MM-DD') WHERE id_reserva = {id_reserva}")
-            elif opt == '2':
-                data_checkout = input("Data de check-out (YYYY-MM-DD): ")
-                oracle.write(f"UPDATE reserva SET data_checkout = TO_DATE('{data_checkout}', 'YYYY-MM-DD') WHERE id_reserva = {id_reserva}")
-            elif opt == '3':
-                qtd_hospedes = int(input("Quantidade de hóspedes: "))
-                oracle.write(f"UPDATE reserva SET qtd_hospedes = {qtd_hospedes} WHERE id_reserva = {id_reserva}")
-            elif opt == '4':
-                status = input("Status (Ativa, Finalizada, Cancelada): ")
-                oracle.write(f"UPDATE reserva SET status = '{status}' WHERE id_reserva = {id_reserva}")
-            else:
-                print("Opção inválida")
-                return None
-
-        df_reserva = oracle.sqlToDataFrame(f"SELECT * FROM reserva WHERE id_reserva = {id_reserva}")
         
-        df_hospede = oracle.sqlToDataFrame(f"SELECT * FROM hospede WHERE cpf = '{df_reserva.cpf.values[0]}'")
-        hospede = Hospede(df_hospede.cpf.values[0], df_hospede.nome.values[0], df_hospede.telefone.values[0], str(df_hospede.data_cadastro.values[0]))
-        df_quarto = oracle.sqlToDataFrame(f"SELECT * FROM quarto WHERE numero_quarto = {df_reserva.numero_quarto.values[0]}")
-        quarto = Quarto(df_quarto.numero_quarto.values[0], df_quarto.tipo.values[0], df_quarto.valor_diaria.values[0], df_quarto.status.values[0])
+        quarto = self.mongo.db["quarto"].find_one({"numero_quarto": doc["numero_quarto"]})
+        valor_diaria = quarto["valor_diaria"]
 
-        reserva_atualizada = Reserva(
-            df_reserva.id_reserva.values[0],
-            hospede,
-            quarto,
-            str(df_reserva.data_checkin.values[0]),
-            str(df_reserva.data_checkout.values[0]),
-            df_reserva.qtd_hospedes.values[0],
-            df_reserva.valor_total.values[0],
-            df_reserva.status.values[0],
-            str(df_reserva.criado_em.values[0])
+        dias = (datetime.strptime(data_checkout, "%Y-%m-%d") -
+                datetime.strptime(data_checkin, "%Y-%m-%d")).days
+
+        valor_total = dias * valor_diaria
+
+        self.mongo.db["reserva"].update_one(
+            {"id_reserva": reserva_id},
+            {"$set": {
+                "data_checkin": data_checkin,
+                "data_checkout": data_checkout,
+                "qtd_hospedes": int(qtd_hospedes),
+                "valor_total": valor_total,
+                "status": status
+            }}
         )
+
+        atualizado = self.mongo.db["reserva"].find_one({"id_reserva": reserva_id}, {"_id": 0})
+
+        reserva = Reserva(
+            atualizado["id_reserva"],
+            Hospede(atualizado["cpf"]),
+            Quarto(atualizado["numero_quarto"]),
+            atualizado["data_checkin"],
+            atualizado["data_checkout"],
+            atualizado["qtd_hospedes"],
+            atualizado["valor_total"],
+            atualizado["status"],
+            atualizado["criado_em"]
+        )
+
         print("\nReserva atualizada com sucesso!\n")
-        print(reserva_atualizada.to_string())
-        return reserva_atualizada
+        print(reserva.to_string())
 
-    
-    def excluir_reserva_interactive(self):
-        oracle = OracleQueries(can_write=True)
-        oracle.connect()
+        self.mongo.close()
+        return reserva
 
-        df = oracle.sqlToDataFrame("SELECT id_reserva, cpf, numero_quarto, status FROM reserva ORDER BY id_reserva")
-        if df.empty:
-            print("Nenhuma reserva cadastrada.")
+    def excluir_reserva(self):
+        self.mongo.connect()
+
+        reserva_id = int(input("ID da reserva que deseja excluir: "))
+
+        doc = self.mongo.db["reserva"].find_one({"id_reserva": reserva_id}, {"_id": 0})
+
+        if not doc:
+            print("\nReserva não encontrada.\n")
+            self.mongo.close()
             return
 
-        for i, row in enumerate(df.itertuples(), start=1):
-            print(f"{i}) ID: {row.id_reserva} - CPF: {row.cpf} - Quarto: {row.numero_quarto} - {row.status}")
+        self.mongo.db["reserva"].delete_one({"id_reserva": reserva_id})
 
-        escolha = input("Selecione o número da tupla que deseja excluir: ")
-        try:
-            idx = int(escolha) - 1
-            id_reserva = int(df.id_reserva.values[idx])
-        except Exception:
-            print("Seleção inválida")
-            return
-
-        resp = input(f"Confirma exclusão da reserva {id_reserva}? (S/N): ").strip().upper()
-        if resp != 'S':
-            print("Operação cancelada. Voltando ao menu.")
-            return
-
-        df_reserva = oracle.sqlToDataFrame(f"SELECT * FROM reserva WHERE id_reserva = {id_reserva}")
-        oracle.write(f"DELETE FROM reserva WHERE id_reserva = {id_reserva}")
-
-        hospede = Hospede(df_reserva.cpf.values[0], None, None, None) if not df_reserva.empty else None
-        quarto = Quarto(df_reserva.numero_quarto.values[0], None, None, None) if not df_reserva.empty else None
-        reserva_excluida = Reserva(
-            df_reserva.id_reserva.values[0],
-            hospede,
-            quarto,
-            str(df_reserva.data_checkin.values[0]),
-            str(df_reserva.data_checkout.values[0]),
-            df_reserva.qtd_hospedes.values[0],
-            df_reserva.valor_total.values[0],
-            df_reserva.status.values[0],
-            str(df_reserva.criado_em.values[0])
+        excluida = Reserva(
+            doc["id_reserva"],
+            Hospede(doc["cpf"]),
+            Quarto(doc["numero_quarto"]),
+            doc["data_checkin"],
+            doc["data_checkout"],
+            doc["qtd_hospedes"],
+            doc["valor_total"],
+            doc["status"],
+            doc["criado_em"]
         )
+
         print("\nReserva removida com sucesso!\n")
-        print(reserva_excluida.to_string())
+        print(excluida.to_string())
+
+        self.mongo.close()
+
+    def excluir_reserva_interactive(self):
+        self.mongo.connect()
+
+        reservas = list(self.mongo.db["reserva"].find({}, {"_id": 0}))
+
+        if len(reservas) == 0:
+            print("Nenhuma reserva cadastrada.")
+            self.mongo.close()
+            return
+
+        for i, r in enumerate(reservas, start=1):
+            print(f"{i}) ID: {r['id_reserva']} - CPF: {r['cpf']} - Quarto: {r['numero_quarto']}")
+
+        idx = int(input("Selecione a reserva: ")) - 1
+        reserva_id = reservas[idx]["id_reserva"]
+
+        doc = self.mongo.db["reserva"].find_one({"id_reserva": reserva_id}, {"_id": 0})
+
+        self.mongo.db["reserva"].delete_one({"id_reserva": reserva_id})
+
+        excluida = Reserva(
+            doc["id_reserva"],
+            Hospede(doc["cpf"]),
+            Quarto(doc["numero_quarto"]),
+            doc["data_checkin"],
+            doc["data_checkout"],
+            doc["qtd_hospedes"],
+            doc["valor_total"],
+            doc["status"],
+            doc["criado_em"]
+        )
+
+        print("\nReserva removida com sucesso!\n")
+        print(excluida.to_string())
+
+        self.mongo.close()
