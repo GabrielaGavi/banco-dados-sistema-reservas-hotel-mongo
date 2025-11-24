@@ -4,6 +4,6 @@ Sistema de reservas de hotel desenvolvido em Python com MongoDB Atlas com contro
 
 Integrantes do grupo: Davi Pereira de Sousa, Gabriela Gave Gavi, José Luiz dos Santos Azeredo, Pedro Henrique Bispo, Pedro Henrique Ferreira Bonela.
 
-Vídeo explicativo do projeto: 
+Vídeo explicativo do projeto: https://www.youtube.com/watch?v=ZHWAYUoUifc
 
 # 
